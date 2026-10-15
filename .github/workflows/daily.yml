@@ -1,0 +1,38 @@
+name: QA Daily Report → Slack
+
+on:
+  schedule:
+    # 03:15 IST daily = 21:45 UTC the previous day
+    - cron: '45 21 * * *'
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'IST date to report for (YYYY-MM-DD). Leave blank for yesterday.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Print the message instead of posting to Slack'
+        required: false
+        default: 'false'
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run report
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL:   ${{ secrets.SLACK_CHANNEL }}
+          TARGET_DATE:     ${{ github.event.inputs.target_date }}
+          DRY_RUN:         ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+        run: python report.py
