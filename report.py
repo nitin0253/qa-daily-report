@@ -213,8 +213,7 @@ def render_slack_message(
     table = "\n".join(body)
     return (
         f"*QA Daily Report — {header_date}*\n"
-        f"QA reviewed counts for yesterday (Image & 360 = IST calendar day, "
-        f"Video = 06:00 IST shift day).\n"
+        f"Here's yesterday's QA review summary across Image, 360 and Video.\n"
         f"```\n{table}\n```"
     )
 
