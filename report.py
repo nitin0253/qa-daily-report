@@ -261,19 +261,20 @@ def post_to_slack(text: str, channel: str, token: str) -> dict:
 # ── PDF rendering ────────────────────────────────────────────────────────
 PDF_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><style>
-  @page {{ size: A4; margin: 22mm 20mm; }}
+  @page {{ size: {page_w}mm {page_h}mm; margin: 12mm 14mm; }}
+  html, body {{ margin: 0; padding: 0; }}
   body {{ font-family: 'Helvetica Neue', 'Arial', sans-serif; color: #1a1f2b; }}
-  h1 {{ font-size: 26pt; font-weight: 800; margin: 0 0 4pt; letter-spacing: -0.02em; }}
-  .date {{ color: #5c6473; font-size: 12pt; margin: 0 0 10pt; }}
-  .lede {{ font-size: 11pt; margin: 0 0 18pt; }}
+  h1 {{ font-size: 24pt; font-weight: 800; margin: 0 0 3pt; letter-spacing: -0.02em; }}
+  .date {{ color: #5c6473; font-size: 11pt; margin: 0 0 8pt; }}
+  .lede {{ font-size: 10.5pt; margin: 0 0 12pt; }}
   table {{ width: 100%; border-collapse: separate; border-spacing: 0;
-           font-size: 11pt; border: 1px solid #e3e6ec; }}
+           font-size: 10.5pt; border: 1px solid #e3e6ec; }}
   thead th {{ background: #3b4557; color: #fff; font-weight: 700;
-              text-align: center; padding: 10pt 12pt;
+              text-align: center; padding: 8pt 10pt;
               border-bottom: 1px solid #e3e6ec; }}
   thead th:first-child {{ text-align: left; }}
   thead th.total {{ background: #3f5230; }}
-  tbody td {{ padding: 10pt 12pt; border-bottom: 1px solid #e3e6ec;
+  tbody td {{ padding: 8pt 10pt; border-bottom: 1px solid #e3e6ec;
               text-align: center; }}
   tbody td:first-child {{ text-align: left; }}
   tbody td.total {{ background: #dfe8d0; font-weight: 600; }}
@@ -281,7 +282,7 @@ PDF_HTML = """<!doctype html>
                      border-bottom: none; }}
   tbody tr.sum td.total {{ background: #c6d5dc; }}
   tbody tr:last-child td {{ border-bottom: none; }}
-  .footer {{ margin-top: 14pt; color: #5c6473; font-size: 9pt; font-style: italic; }}
+  .footer {{ margin-top: 10pt; margin-bottom: 0; color: #5c6473; font-size: 9pt; font-style: italic; }}
 </style></head><body>
 <h1>QA Daily Report</h1>
 <p class="date">{date_full}</p>
@@ -316,7 +317,15 @@ def render_pdf_bytes(
         for u, i, s, v, t in rows
     )
     ti, ts, tv, tt = totals
+
+    # Content-fit page: fixed width that holds the table comfortably, height
+    # grown per data row so the PDF doesn't leave an A4-sized blank below.
+    page_w = 190
+    page_h = 102 + 9 * max(len(rows), 1)
+
     html = PDF_HTML.format(
+        page_w=page_w,
+        page_h=page_h,
         date_full=date_full,
         rows_html=rows_html,
         ti=_fmt_int(ti),
