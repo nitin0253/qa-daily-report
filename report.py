@@ -219,6 +219,27 @@ def render_slack_message(
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────
+SLACK_LOOKUP = "https://slack.com/api/users.lookupByEmail"
+
+
+def resolve_email_to_user(email: str, token: str) -> str:
+    """DM a user by email: look up their user ID; chat.postMessage then
+    opens an IM for us. Requires `users:read.email` scope on the bot."""
+    resp = requests.get(
+        SLACK_LOOKUP,
+        params={"email": email},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
+    try:
+        data = resp.json()
+    except ValueError:
+        raise SystemExit(f"Slack HTTP {resp.status_code}: {resp.text[:400]}")
+    if not data.get("ok"):
+        raise SystemExit(f"Slack users.lookupByEmail error ({email}): {data}")
+    return data["user"]["id"]
+
+
 def post_to_slack(text: str, channel: str, token: str) -> dict:
     resp = requests.post(
         SLACK_API,
@@ -270,6 +291,8 @@ def main() -> int:
         print("SLACK_BOT_TOKEN is not set", file=sys.stderr)
         return 1
     channel = os.environ.get("SLACK_CHANNEL", DEFAULT_CHANNEL).strip() or DEFAULT_CHANNEL
+    if "@" in channel:
+        channel = resolve_email_to_user(channel, token)
 
     resp = post_to_slack(message, channel, token)
     print(f"Posted to {channel} (ts={resp.get('ts')})", file=sys.stderr)

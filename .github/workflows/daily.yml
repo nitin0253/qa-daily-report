@@ -10,6 +10,10 @@ on:
         description: 'IST date to report for (YYYY-MM-DD). Leave blank for yesterday.'
         required: false
         default: ''
+      channel_override:
+        description: 'Override Slack destination (channel id, DM id, or user email). Leave blank for the team channel.'
+        required: false
+        default: ''
       dry_run:
         description: 'Print the message instead of posting to Slack'
         required: false
@@ -32,7 +36,7 @@ jobs:
       - name: Run report
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_CHANNEL:   ${{ secrets.SLACK_CHANNEL }}
+          SLACK_CHANNEL:   ${{ github.event.inputs.channel_override != '' && github.event.inputs.channel_override || secrets.SLACK_CHANNEL }}
           TARGET_DATE:     ${{ github.event.inputs.target_date }}
           DRY_RUN:         ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
         run: python report.py
