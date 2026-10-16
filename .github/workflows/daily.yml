@@ -57,6 +57,6 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL:   ${{ github.event.inputs.channel_override != '' && github.event.inputs.channel_override || secrets.SLACK_CHANNEL }}
           TARGET_DATE:     ${{ github.event.inputs.target_date }}
-          REPORT_FORMAT:   ${{ github.event.inputs.format || 'text' }}
+          REPORT_FORMAT:   ${{ github.event_name == 'schedule' && 'pdf' || (github.event.inputs.format || 'text') }}
           DRY_RUN:         ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
         run: python report.py
