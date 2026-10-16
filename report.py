@@ -261,20 +261,22 @@ def post_to_slack(text: str, channel: str, token: str) -> dict:
 # ── PDF rendering ────────────────────────────────────────────────────────
 PDF_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><style>
-  @page {{ size: {page_w}mm {page_h}mm; margin: 12mm 14mm; }}
+  @page {{ size: {page_w}mm {page_h}mm; margin: 5mm 10mm; }}
   html, body {{ margin: 0; padding: 0; }}
-  body {{ font-family: 'Helvetica Neue', 'Arial', sans-serif; color: #1a1f2b; }}
-  h1 {{ font-size: 24pt; font-weight: 800; margin: 0 0 3pt; letter-spacing: -0.02em; }}
-  .date {{ color: #5c6473; font-size: 11pt; margin: 0 0 8pt; }}
-  .lede {{ font-size: 10.5pt; margin: 0 0 12pt; }}
+  body {{ font-family: 'Helvetica Neue', 'Arial', sans-serif; color: #1a1f2b;
+          line-height: 1.2; }}
+  h1 {{ font-size: 22pt; font-weight: 800; margin: 0 0 2pt; letter-spacing: -0.02em;
+        line-height: 1.1; }}
+  .date {{ color: #5c6473; font-size: 10.5pt; margin: 0 0 5pt; }}
+  .lede {{ font-size: 10pt; margin: 0 0 8pt; }}
   table {{ width: 100%; border-collapse: separate; border-spacing: 0;
-           font-size: 10.5pt; border: 1px solid #e3e6ec; }}
+           font-size: 10pt; border: 1px solid #e3e6ec; }}
   thead th {{ background: #3b4557; color: #fff; font-weight: 700;
-              text-align: center; padding: 8pt 10pt;
+              text-align: center; padding: 6pt 10pt;
               border-bottom: 1px solid #e3e6ec; }}
   thead th:first-child {{ text-align: left; }}
   thead th.total {{ background: #3f5230; }}
-  tbody td {{ padding: 8pt 10pt; border-bottom: 1px solid #e3e6ec;
+  tbody td {{ padding: 6pt 10pt; border-bottom: 1px solid #e3e6ec;
               text-align: center; }}
   tbody td:first-child {{ text-align: left; }}
   tbody td.total {{ background: #dfe8d0; font-weight: 600; }}
@@ -282,7 +284,8 @@ PDF_HTML = """<!doctype html>
                      border-bottom: none; }}
   tbody tr.sum td.total {{ background: #c6d5dc; }}
   tbody tr:last-child td {{ border-bottom: none; }}
-  .footer {{ margin-top: 10pt; margin-bottom: 0; color: #5c6473; font-size: 9pt; font-style: italic; }}
+  .footer {{ margin-top: 6pt; margin-bottom: 0; color: #5c6473;
+             font-size: 8.5pt; font-style: italic; }}
 </style></head><body>
 <h1>QA Daily Report</h1>
 <p class="date">{date_full}</p>
@@ -320,8 +323,11 @@ def render_pdf_bytes(
 
     # Content-fit page: fixed width that holds the table comfortably, height
     # grown per data row so the PDF doesn't leave an A4-sized blank below.
+    # Base covers 5mm top + 5mm bottom margin + ~55mm chrome
+    # (title + date + lede + table head + totals row + footer).
+    # Each data row adds ~9mm at the current 10pt / 6pt-padding settings.
     page_w = 190
-    page_h = 102 + 9 * max(len(rows), 1)
+    page_h = 70 + 9 * max(len(rows), 1)
 
     html = PDF_HTML.format(
         page_w=page_w,
@@ -361,20 +367,21 @@ def open_im_channel(user_id: str, token: str) -> str:
     return data["channel"]["id"]
 
 
-def upload_pdf_to_slack(
-    pdf_bytes: bytes,
+def upload_file_to_slack(
+    file_bytes: bytes,
     filename: str,
+    content_type: str,
     title: str,
     initial_comment: str,
     channel: str,
     token: str,
 ) -> dict:
-    """Upload a PDF to Slack and share it in `channel`. Needs `files:write`."""
+    """Upload a file to Slack and share it in `channel`. Needs `files:write`."""
     headers = {"Authorization": f"Bearer {token}"}
 
     r1 = requests.get(
         SLACK_GET_UPLOAD_URL,
-        params={"filename": filename, "length": len(pdf_bytes)},
+        params={"filename": filename, "length": len(file_bytes)},
         headers=headers,
         timeout=30,
     )
@@ -384,19 +391,22 @@ def upload_pdf_to_slack(
 
     r2 = requests.post(
         d1["upload_url"],
-        files={"file": (filename, pdf_bytes, "application/pdf")},
+        files={"file": (filename, file_bytes, content_type)},
         timeout=60,
     )
     if r2.status_code != 200:
         raise SystemExit(f"Slack upload POST {r2.status_code}: {r2.text[:400]}")
 
+    payload = {
+        "files": [{"id": d1["file_id"], "title": title}],
+        "channel_id": channel,
+    }
+    if initial_comment:
+        payload["initial_comment"] = initial_comment
+
     r3 = requests.post(
         SLACK_COMPLETE_UPLOAD,
-        json={
-            "files": [{"id": d1["file_id"], "title": title}],
-            "channel_id": channel,
-            "initial_comment": initial_comment,
-        },
+        json=payload,
         headers={**headers, "Content-Type": "application/json; charset=utf-8"},
         timeout=30,
     )
@@ -404,6 +414,20 @@ def upload_pdf_to_slack(
     if not d3.get("ok"):
         raise SystemExit(f"files.completeUploadExternal: {d3}")
     return d3
+
+
+def render_jpg_bytes(pdf_bytes: bytes, dpi: int = 180) -> bytes:
+    """Rasterize page 1 of the PDF to a JPEG so the same artwork can be shared
+    inline in Slack (previews better than a PDF in a DM)."""
+    import pypdfium2 as pdfium  # imported lazily
+    from io import BytesIO
+
+    pdf = pdfium.PdfDocument(pdf_bytes)
+    page = pdf[0]
+    pil = page.render(scale=dpi / 72).to_pil().convert("RGB")
+    buf = BytesIO()
+    pil.save(buf, format="JPEG", quality=92, optimize=True)
+    return buf.getvalue()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
@@ -444,29 +468,58 @@ def main() -> int:
     if "@" in channel:
         channel = resolve_email_to_user(channel, token)
 
-    fmt = (os.environ.get("REPORT_FORMAT") or "text").strip().lower()
-    if fmt not in ("text", "pdf", "both"):
-        print(f"Invalid REPORT_FORMAT {fmt!r}; use text|pdf|both", file=sys.stderr)
+    fmt_raw = (os.environ.get("REPORT_FORMAT") or "text").strip().lower()
+    formats = {f.strip() for f in fmt_raw.split(",") if f.strip()}
+    valid = {"text", "pdf", "jpg"}
+    unknown = formats - valid
+    if unknown or not formats:
+        print(
+            f"Invalid REPORT_FORMAT {fmt_raw!r}; use any comma-separated subset of {sorted(valid)}",
+            file=sys.stderr,
+        )
         return 2
 
-    if fmt in ("text", "both"):
+    # files.completeUploadExternal wants a conversation id, not a user id.
+    file_channel = (
+        open_im_channel(channel, token) if channel.startswith("U") else channel
+    )
+    date_label = target.strftime("%d %b %Y")
+    lead_comment = (
+        f"*QA Daily Report — {date_label}*\n"
+        f"Here's yesterday's QA review summary across Image, 360 and Video."
+    )
+    # Only one post or upload carries the lead comment, so the DM shows the
+    # intro once instead of once per file.
+    comment_used = False
+
+    if "text" in formats:
         resp = post_to_slack(message, channel, token)
         print(f"Posted text to {channel} (ts={resp.get('ts')})", file=sys.stderr)
+        comment_used = True
 
-    if fmt in ("pdf", "both"):
+    pdf = None
+    if "pdf" in formats or "jpg" in formats:
         pdf = render_pdf_bytes(target, rows, totals)
+
+    if "pdf" in formats:
         filename = f"{PDF_FILENAME_PREFIX}-{target.isoformat()}.pdf"
-        title = f"QA Daily Report — {target.strftime('%d %b %Y')}"
-        comment = "" if fmt == "both" else (
-            f"*QA Daily Report — {target.strftime('%d %b %Y')}*\n"
-            f"Here's yesterday's QA review summary across Image, 360 and Video."
+        title = f"QA Daily Report — {date_label}"
+        comment = "" if comment_used else lead_comment
+        upload_file_to_slack(
+            pdf, filename, "application/pdf", title, comment, file_channel, token,
         )
-        # files.completeUploadExternal wants a conversation id, not a user id.
-        file_channel = (
-            open_im_channel(channel, token) if channel.startswith("U") else channel
-        )
-        resp = upload_pdf_to_slack(pdf, filename, title, comment, file_channel, token)
         print(f"Uploaded PDF to {file_channel} ({len(pdf)} bytes)", file=sys.stderr)
+        comment_used = True
+
+    if "jpg" in formats:
+        jpg = render_jpg_bytes(pdf)
+        filename = f"{PDF_FILENAME_PREFIX}-{target.isoformat()}.jpg"
+        title = f"QA Daily Report — {date_label}"
+        comment = "" if comment_used else lead_comment
+        upload_file_to_slack(
+            jpg, filename, "image/jpeg", title, comment, file_channel, token,
+        )
+        print(f"Uploaded JPG to {file_channel} ({len(jpg)} bytes)", file=sys.stderr)
 
     return 0
 

@@ -15,14 +15,17 @@ on:
         required: false
         default: ''
       format:
-        description: 'Delivery format: text (default), pdf (upload file), or both'
+        description: 'Delivery format (comma-separated subset of text,pdf,jpg)'
         required: false
         default: 'text'
         type: choice
         options:
           - text
           - pdf
-          - both
+          - jpg
+          - 'text,pdf'
+          - 'pdf,jpg'
+          - 'text,pdf,jpg'
       dry_run:
         description: 'Print the message instead of posting to Slack'
         required: false

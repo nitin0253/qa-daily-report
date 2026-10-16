@@ -1,2 +1,4 @@
 requests>=2.31
 weasyprint>=62
+pypdfium2>=4.30
+pillow>=10
