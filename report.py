@@ -331,6 +331,25 @@ def render_pdf_bytes(
 # ── Slack file upload (new three-step external-upload flow) ──────────────
 SLACK_GET_UPLOAD_URL = "https://slack.com/api/files.getUploadURLExternal"
 SLACK_COMPLETE_UPLOAD = "https://slack.com/api/files.completeUploadExternal"
+SLACK_CONVERSATIONS_OPEN = "https://slack.com/api/conversations.open"
+
+
+def open_im_channel(user_id: str, token: str) -> str:
+    """Resolve a `U…` user ID to a `D…` IM channel ID (files.complete needs
+    a conversation id, not a user id). Needs `im:write` on the bot."""
+    resp = requests.post(
+        SLACK_CONVERSATIONS_OPEN,
+        json={"users": user_id},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        timeout=15,
+    )
+    data = resp.json()
+    if not data.get("ok"):
+        raise SystemExit(f"conversations.open: {data}")
+    return data["channel"]["id"]
 
 
 def upload_pdf_to_slack(
@@ -433,8 +452,12 @@ def main() -> int:
             f"*QA Daily Report — {target.strftime('%d %b %Y')}*\n"
             f"Here's yesterday's QA review summary across Image, 360 and Video."
         )
-        resp = upload_pdf_to_slack(pdf, filename, title, comment, channel, token)
-        print(f"Uploaded PDF to {channel} ({len(pdf)} bytes)", file=sys.stderr)
+        # files.completeUploadExternal wants a conversation id, not a user id.
+        file_channel = (
+            open_im_channel(channel, token) if channel.startswith("U") else channel
+        )
+        resp = upload_pdf_to_slack(pdf, filename, title, comment, file_channel, token)
+        print(f"Uploaded PDF to {file_channel} ({len(pdf)} bytes)", file=sys.stderr)
 
     return 0
 
