@@ -1,9 +1,10 @@
 name: QA Daily Report → Slack
 
 on:
-  schedule:
-    # 03:15 IST daily = 21:45 UTC the previous day
-    - cron: '45 21 * * *'
+  # Scheduling moved to the Claude cloud routine (trig_01PkbqnVFuYMhN5guYBZRPz1),
+  # which calls workflow_dispatch at 03:00 IST sharp. GH Actions' own cron was
+  # removed because its first-fire lag and 10-60 min load delays missed the
+  # 03:15 IST morning window.
   workflow_dispatch:
     inputs:
       target_date:
