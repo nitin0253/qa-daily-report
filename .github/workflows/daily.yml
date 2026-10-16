@@ -14,6 +14,15 @@ on:
         description: 'Override Slack destination (channel id, DM id, or user email). Leave blank for the team channel.'
         required: false
         default: ''
+      format:
+        description: 'Delivery format: text (default), pdf (upload file), or both'
+        required: false
+        default: 'text'
+        type: choice
+        options:
+          - text
+          - pdf
+          - both
       dry_run:
         description: 'Print the message instead of posting to Slack'
         required: false
@@ -30,6 +39,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install WeasyPrint system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 \
+            libharfbuzz0b fonts-dejavu-core
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -38,5 +54,6 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL:   ${{ github.event.inputs.channel_override != '' && github.event.inputs.channel_override || secrets.SLACK_CHANNEL }}
           TARGET_DATE:     ${{ github.event.inputs.target_date }}
+          REPORT_FORMAT:   ${{ github.event.inputs.format || 'text' }}
           DRY_RUN:         ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
         run: python report.py

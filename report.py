@@ -43,6 +43,8 @@ from datetime import date, datetime, timedelta, timezone
 
 import requests
 
+PDF_FILENAME_PREFIX = "qa-daily-report"
+
 IST = timezone(timedelta(hours=5, minutes=30))
 
 QC_API = "https://spot-qc-dashboard.vercel.app/api/qc"
@@ -256,6 +258,126 @@ def post_to_slack(text: str, channel: str, token: str) -> dict:
     return data
 
 
+# ── PDF rendering ────────────────────────────────────────────────────────
+PDF_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @page {{ size: A4; margin: 22mm 20mm; }}
+  body {{ font-family: 'Helvetica Neue', 'Arial', sans-serif; color: #1a1f2b; }}
+  h1 {{ font-size: 26pt; font-weight: 800; margin: 0 0 4pt; letter-spacing: -0.02em; }}
+  .date {{ color: #5c6473; font-size: 12pt; margin: 0 0 10pt; }}
+  .lede {{ font-size: 11pt; margin: 0 0 18pt; }}
+  table {{ width: 100%; border-collapse: separate; border-spacing: 0;
+           font-size: 11pt; border: 1px solid #e3e6ec; }}
+  thead th {{ background: #3b4557; color: #fff; font-weight: 700;
+              text-align: center; padding: 10pt 12pt;
+              border-bottom: 1px solid #e3e6ec; }}
+  thead th:first-child {{ text-align: left; }}
+  thead th.total {{ background: #3f5230; }}
+  tbody td {{ padding: 10pt 12pt; border-bottom: 1px solid #e3e6ec;
+              text-align: center; }}
+  tbody td:first-child {{ text-align: left; }}
+  tbody td.total {{ background: #dfe8d0; font-weight: 600; }}
+  tbody tr.sum td {{ background: #c6d5dc; color: #16202b; font-weight: 700;
+                     border-bottom: none; }}
+  tbody tr.sum td.total {{ background: #c6d5dc; }}
+  tbody tr:last-child td {{ border-bottom: none; }}
+  .footer {{ margin-top: 14pt; color: #5c6473; font-size: 9pt; font-style: italic; }}
+</style></head><body>
+<h1>QA Daily Report</h1>
+<p class="date">{date_full}</p>
+<p class="lede">Here's yesterday's QA review summary across Image, 360 and Video.</p>
+<table>
+<thead><tr><th>User</th><th>Image</th><th>360</th><th>Video</th><th class="total">Total</th></tr></thead>
+<tbody>
+{rows_html}
+<tr class="sum"><td>Total</td><td>{ti}</td><td>{ts}</td><td>{tv}</td><td class="total">{tt}</td></tr>
+</tbody></table>
+<p class="footer">Generated {generated_at} &middot; Sources: spot-qc-dashboard (Image + 360) &middot; SpotQC-QA-Report (Video)</p>
+</body></html>"""
+
+
+def _fmt_int(n: int) -> str:
+    return f"{int(n):,}"
+
+
+def render_pdf_bytes(
+    target_day: date,
+    rows: list[tuple[str, int, int, int, int]],
+    totals: tuple[int, int, int, int],
+) -> bytes:
+    """Render the same table used in the artifact as a one-page PDF."""
+    from weasyprint import HTML  # imported lazily so text-only runs stay light
+
+    date_full = target_day.strftime("%A, %d %B %Y")
+    generated_at = datetime.now(IST).strftime("%d %b %Y, %I:%M %p IST")
+    rows_html = "\n".join(
+        f"<tr><td>{u}</td><td>{_fmt_int(i)}</td><td>{_fmt_int(s)}</td>"
+        f"<td>{_fmt_int(v)}</td><td class=\"total\">{_fmt_int(t)}</td></tr>"
+        for u, i, s, v, t in rows
+    )
+    ti, ts, tv, tt = totals
+    html = PDF_HTML.format(
+        date_full=date_full,
+        rows_html=rows_html,
+        ti=_fmt_int(ti),
+        ts=_fmt_int(ts),
+        tv=_fmt_int(tv),
+        tt=_fmt_int(tt),
+        generated_at=generated_at,
+    )
+    return HTML(string=html).write_pdf()
+
+
+# ── Slack file upload (new three-step external-upload flow) ──────────────
+SLACK_GET_UPLOAD_URL = "https://slack.com/api/files.getUploadURLExternal"
+SLACK_COMPLETE_UPLOAD = "https://slack.com/api/files.completeUploadExternal"
+
+
+def upload_pdf_to_slack(
+    pdf_bytes: bytes,
+    filename: str,
+    title: str,
+    initial_comment: str,
+    channel: str,
+    token: str,
+) -> dict:
+    """Upload a PDF to Slack and share it in `channel`. Needs `files:write`."""
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r1 = requests.get(
+        SLACK_GET_UPLOAD_URL,
+        params={"filename": filename, "length": len(pdf_bytes)},
+        headers=headers,
+        timeout=30,
+    )
+    d1 = r1.json()
+    if not d1.get("ok"):
+        raise SystemExit(f"files.getUploadURLExternal: {d1}")
+
+    r2 = requests.post(
+        d1["upload_url"],
+        files={"file": (filename, pdf_bytes, "application/pdf")},
+        timeout=60,
+    )
+    if r2.status_code != 200:
+        raise SystemExit(f"Slack upload POST {r2.status_code}: {r2.text[:400]}")
+
+    r3 = requests.post(
+        SLACK_COMPLETE_UPLOAD,
+        json={
+            "files": [{"id": d1["file_id"], "title": title}],
+            "channel_id": channel,
+            "initial_comment": initial_comment,
+        },
+        headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+        timeout=30,
+    )
+    d3 = r3.json()
+    if not d3.get("ok"):
+        raise SystemExit(f"files.completeUploadExternal: {d3}")
+    return d3
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 def main() -> int:
     target_env = os.environ.get("TARGET_DATE", "").strip()
@@ -294,8 +416,26 @@ def main() -> int:
     if "@" in channel:
         channel = resolve_email_to_user(channel, token)
 
-    resp = post_to_slack(message, channel, token)
-    print(f"Posted to {channel} (ts={resp.get('ts')})", file=sys.stderr)
+    fmt = (os.environ.get("REPORT_FORMAT") or "text").strip().lower()
+    if fmt not in ("text", "pdf", "both"):
+        print(f"Invalid REPORT_FORMAT {fmt!r}; use text|pdf|both", file=sys.stderr)
+        return 2
+
+    if fmt in ("text", "both"):
+        resp = post_to_slack(message, channel, token)
+        print(f"Posted text to {channel} (ts={resp.get('ts')})", file=sys.stderr)
+
+    if fmt in ("pdf", "both"):
+        pdf = render_pdf_bytes(target, rows, totals)
+        filename = f"{PDF_FILENAME_PREFIX}-{target.isoformat()}.pdf"
+        title = f"QA Daily Report — {target.strftime('%d %b %Y')}"
+        comment = "" if fmt == "both" else (
+            f"*QA Daily Report — {target.strftime('%d %b %Y')}*\n"
+            f"Here's yesterday's QA review summary across Image, 360 and Video."
+        )
+        resp = upload_pdf_to_slack(pdf, filename, title, comment, channel, token)
+        print(f"Uploaded PDF to {channel} ({len(pdf)} bytes)", file=sys.stderr)
+
     return 0
 
 
