@@ -2,11 +2,13 @@ name: QA Daily Report → Slack
 
 on:
   schedule:
-    # 03:15 IST daily = 21:45 UTC the previous day. GitHub's scheduler
-    # typically fires 15-45 min late, so the post lands between ~03:15
-    # and ~04:00 IST on most mornings. First fire after creating the
-    # schedule can be delayed significantly longer (new-repo lag).
-    - cron: '45 21 * * *'
+    # 03:00 IST daily = 21:30 UTC the previous day. GitHub's scheduler
+    # typically fires 15-45 min late (and occasionally 2+ h on free-tier
+    # personal repos), so expect the post to land between ~03:00 and
+    # ~03:45 IST on most mornings. GH Actions does not guarantee an
+    # exact fire time; if a sub-minute SLA is ever required, move the
+    # trigger off GH Actions.
+    - cron: '30 21 * * *'
   workflow_dispatch:
     inputs:
       target_date:
