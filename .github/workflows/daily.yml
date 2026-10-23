@@ -67,5 +67,5 @@ jobs:
           SLACK_CHANNEL:   ${{ github.event.inputs.channel_override || github.event.client_payload.channel_override || secrets.SLACK_CHANNEL }}
           TARGET_DATE:     ${{ github.event.inputs.target_date      || github.event.client_payload.target_date      || '' }}
           REPORT_FORMAT:   ${{ github.event.inputs.format           || github.event.client_payload.format           || 'text' }}
-          DRY_RUN:         ${{ (github.event.inputs.dry_run == 'true' || github.event.client_payload.dry_run == true) && '1' || '' }}
+          DRY_RUN:         ${{ (github.event.inputs.dry_run == 'true' || github.event.client_payload.dry_run == 'true' || github.event.client_payload.dry_run == true) && '1' || '' }}
         run: python report.py
