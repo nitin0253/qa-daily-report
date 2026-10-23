@@ -1,14 +1,15 @@
 name: QA Daily Report → Slack
 
 on:
-  schedule:
-    # 03:00 IST daily = 21:30 UTC the previous day. GitHub's scheduler
-    # typically fires 15-45 min late (and occasionally 2+ h on free-tier
-    # personal repos), so expect the post to land between ~03:00 and
-    # ~03:45 IST on most mornings. GH Actions does not guarantee an
-    # exact fire time; if a sub-minute SLA is ever required, move the
-    # trigger off GH Actions.
-    - cron: '30 21 * * *'
+  # repository_dispatch is the primary trigger — fired by an external
+  # cron (cron-job.org) at 21:30 UTC / 03:00 IST. Unlike GH's own
+  # `schedule`, repository_dispatch runs within seconds of the API
+  # call, so timing is driven by the external scheduler, not GH's
+  # backlog. No `schedule` fallback: it was unreliable (15 min to 2+ h
+  # lag, occasional drops) AND it would duplicate the external post on
+  # days when both fire. Rely on external cron + manual dispatch.
+  repository_dispatch:
+    types: [daily-report]
   workflow_dispatch:
     inputs:
       target_date:
@@ -60,8 +61,11 @@ jobs:
       - name: Run report
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_CHANNEL:   ${{ github.event.inputs.channel_override != '' && github.event.inputs.channel_override || secrets.SLACK_CHANNEL }}
-          TARGET_DATE:     ${{ github.event.inputs.target_date }}
-          REPORT_FORMAT:   ${{ github.event_name == 'schedule' && 'text' || (github.event.inputs.format || 'text') }}
-          DRY_RUN:         ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+          # Overrides come from workflow_dispatch inputs OR
+          # repository_dispatch client_payload (same keys). Blank on
+          # either falls through to defaults.
+          SLACK_CHANNEL:   ${{ github.event.inputs.channel_override || github.event.client_payload.channel_override || secrets.SLACK_CHANNEL }}
+          TARGET_DATE:     ${{ github.event.inputs.target_date      || github.event.client_payload.target_date      || '' }}
+          REPORT_FORMAT:   ${{ github.event.inputs.format           || github.event.client_payload.format           || 'text' }}
+          DRY_RUN:         ${{ (github.event.inputs.dry_run == 'true' || github.event.client_payload.dry_run == true) && '1' || '' }}
         run: python report.py
