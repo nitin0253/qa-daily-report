@@ -1,0 +1,7 @@
+{
+  "name": "qa-daily-report-cron",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vercel Cron trigger for the daily QA report GitHub Actions workflow",
+  "type": "module"
+}
