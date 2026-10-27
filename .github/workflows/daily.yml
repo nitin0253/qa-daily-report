@@ -42,13 +42,57 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Dedupe guard. The Vercel Hobby cron window is ±1h, so a manual
+      # test fire inside the window can collide with the automated fire.
+      # If a successful run for this IST calendar day already exists,
+      # skip the rest of this run so Slack never gets the same report
+      # twice. Manual dispatches with an explicit target_date bypass
+      # the guard (operator intent).
+      - name: Dedupe guard — skip if today already posted
+        id: dedupe
+        if: ${{ github.event.inputs.target_date == '' && github.event.client_payload.target_date == null }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MY_RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 <<'PY'
+          import json, os, urllib.request
+          from datetime import datetime, timedelta, timezone
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/daily.yml/runs?status=success&per_page=20",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+              },
+          )
+          data = json.loads(urllib.request.urlopen(req).read())
+          ist = timezone(timedelta(hours=5, minutes=30))
+          my_id = int(os.environ["MY_RUN_ID"])
+          today_ist = datetime.now(ist).date()
+          dups = [
+              r for r in data.get("workflow_runs", [])
+              if r["id"] != my_id
+              and datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")).astimezone(ist).date() == today_ist
+          ]
+          skip = "1" if dups else "0"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"skip={skip}\n")
+          if skip == "1":
+              ids = ", ".join(str(d["id"]) for d in dups)
+              print(f"::notice::Dedupe hit for IST {today_ist}; prior successful run(s): {ids}")
+          PY
+
       - uses: actions/checkout@v4
+        if: ${{ steps.dedupe.outputs.skip != '1' }}
 
       - uses: actions/setup-python@v5
+        if: ${{ steps.dedupe.outputs.skip != '1' }}
         with:
           python-version: '3.12'
 
       - name: Install WeasyPrint system dependencies
+        if: ${{ steps.dedupe.outputs.skip != '1' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -56,9 +100,11 @@ jobs:
             libharfbuzz0b fonts-dejavu-core
 
       - name: Install dependencies
+        if: ${{ steps.dedupe.outputs.skip != '1' }}
         run: pip install -r requirements.txt
 
       - name: Run report
+        if: ${{ steps.dedupe.outputs.skip != '1' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           # Overrides come from workflow_dispatch inputs OR
