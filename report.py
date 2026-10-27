@@ -183,6 +183,7 @@ def render_slack_message(
 ) -> str:
     """Monospaced code-block table so Slack renders aligned columns."""
     header_date = target_day.strftime("%d %b %Y")
+    lede_date = target_day.strftime("%d-%b")
 
     name_w = max([len("User")] + [len(r[0]) for r in rows] + [len("Total")])
     img_w = max(len("Image"), *(len(str(r[1])) for r in rows), len(str(totals[0])))
@@ -215,7 +216,8 @@ def render_slack_message(
     table = "\n".join(body)
     return (
         f"*QA Daily Report — {header_date}*\n"
-        f"Here's yesterday's QA review summary across Image, 360 and Video.\n"
+        f"Here's {lede_date}'s QA review summary across Image, 360 and Video.\n"
+        f"cc: <@U03MLJZBLF5>\n"
         f"```\n{table}\n```"
     )
 
@@ -289,7 +291,7 @@ PDF_HTML = """<!doctype html>
 </style></head><body>
 <h1>QA Daily Report</h1>
 <p class="date">{date_full}</p>
-<p class="lede">Here's yesterday's QA review summary across Image, 360 and Video.</p>
+<p class="lede">Here's {lede_date}'s QA review summary across Image, 360 and Video.<br>cc: @Praveen Agarwal</p>
 <table>
 <thead><tr><th>User</th><th>Image</th><th>360</th><th>Video</th><th class="total">Total</th></tr></thead>
 <tbody>
@@ -313,6 +315,7 @@ def render_pdf_bytes(
     from weasyprint import HTML  # imported lazily so text-only runs stay light
 
     date_full = target_day.strftime("%A, %d %B %Y")
+    lede_date = target_day.strftime("%d-%b")
     generated_at = datetime.now(IST).strftime("%d %b %Y, %I:%M %p IST")
     rows_html = "\n".join(
         f"<tr><td>{u}</td><td>{_fmt_int(i)}</td><td>{_fmt_int(s)}</td>"
@@ -333,6 +336,7 @@ def render_pdf_bytes(
         page_w=page_w,
         page_h=page_h,
         date_full=date_full,
+        lede_date=lede_date,
         rows_html=rows_html,
         ti=_fmt_int(ti),
         ts=_fmt_int(ts),
@@ -484,9 +488,11 @@ def main() -> int:
         open_im_channel(channel, token) if channel.startswith("U") else channel
     )
     date_label = target.strftime("%d %b %Y")
+    lede_date = target.strftime("%d-%b")
     lead_comment = (
         f"*QA Daily Report — {date_label}*\n"
-        f"Here's yesterday's QA review summary across Image, 360 and Video."
+        f"Here's {lede_date}'s QA review summary across Image, 360 and Video.\n"
+        f"cc: <@U03MLJZBLF5>"
     )
     # Only one post or upload carries the lead comment, so the DM shows the
     # intro once instead of once per file.
