@@ -116,3 +116,23 @@ jobs:
           REPORT_FORMAT:   ${{ github.event.inputs.format           || github.event.client_payload.format           || 'text' }}
           DRY_RUN:         ${{ (github.event.inputs.dry_run == 'true' || github.event.client_payload.dry_run == 'true' || github.event.client_payload.dry_run == true) && '1' || '' }}
         run: python report.py
+
+      # The dashboard's SQC_SESSION cookie expires every ~7 days and
+      # requires a manual browser login to refresh (no service-account
+      # path exists yet). Without this, an expired cookie fails silently
+      # — nobody notices until someone asks where the report is.
+      - name: Alert on failure (likely an expired SQC_SESSION cookie)
+        if: ${{ failure() && steps.dedupe.outputs.skip != '1' }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          curl -s -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d "$(cat <<JSON
+          {
+            "channel": "C0996AMFQRZ",
+            "text": ":warning: *QA Daily Report failed to post* (run ${{ github.run_id }}). Most likely the SQC_SESSION cookie for spot-qc-dashboard.spyne.ai has expired — refresh it (log in, copy the sqc_session cookie, run 'gh secret set SQC_SESSION') and re-run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\ncc: <@U03MLJZBLF5>"
+          }
+          JSON
+          )"
