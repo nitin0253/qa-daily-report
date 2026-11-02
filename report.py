@@ -1,30 +1,29 @@
 """Daily QA Review Report → Slack
 
-Pulls yesterday's review counts per QA user from three live dashboards and
+Pulls yesterday's review counts per QA user from one live dashboard and
 posts a single combined table to a Slack channel.
 
-Sources
--------
-Image & 360   https://spot-qc-dashboard.vercel.app/api/qc?product=images|360
-              Row shape: {day: 'YYYY-MM-DD', loginUser, n, ...}
-              "day" is IST calendar day.
-
-Video         Published Google Sheet CSV behind
-              https://nitin0253.github.io/SpotQC-QA-Report/
-              Row shape: ..., qa_status, qa_reviewer, qa_timestamp, ...
-              A "day" on that dashboard is the QC shift day:
-              06:00 IST → next 06:00 IST (per SpotQC-QA-Report decisions).
+Source
+------
+Image, 360 & Video   https://spot-qc-dashboard.spyne.ai/api/qc?product=images|360|video
+                     Row shape: {day: 'YYYY-MM-DD', loginUser, n, ...}
+                     "day" is IST calendar day for all three products.
+                     Gated behind Google SSO; requests need the app's
+                     `sqc_session` cookie (see SQC_SESSION below).
 
 Yesterday
 ---------
-Image/360: previous IST calendar date.
-Video:    previous shift day = [yesterday 06:00 IST, today 06:00 IST).
+Previous IST calendar date, for all three products.
 
 Users are keyed by first name (title case). "Khushi Gautam" and
 "khushi.gautam@spyne.ai" both collapse to "Khushi".
 
 Env
 ---
+SQC_SESSION       value of the `sqc_session` cookie from a logged-in
+                  spot-qc-dashboard.spyne.ai session. Issued per Google
+                  account and expires (observed ~7 days) — refresh by
+                  signing in again and copying the cookie's new value.
 SLACK_BOT_TOKEN   xoxb-... bot token with chat:write
 SLACK_CHANNEL     channel id, default C0996AMFQRZ (the asked channel)
 DRY_RUN           if set to "1", print the message instead of posting
@@ -33,8 +32,6 @@ TARGET_DATE       YYYY-MM-DD (IST calendar). Default: yesterday. Mainly for
 """
 from __future__ import annotations
 
-import csv
-import io
 import json
 import os
 import sys
@@ -47,12 +44,7 @@ PDF_FILENAME_PREFIX = "qa-daily-report"
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-QC_API = "https://spot-qc-dashboard.vercel.app/api/qc"
-VIDEO_CSV = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vQQviNsOTXM2LlIs5ipLiil6Nox9r6BH2o-7-WtgLbTKDIltzZlHXxnlWYm7KkJLfr1JsDM69wyevuT"
-    "/pub?output=csv"
-)
+QC_API = "https://spot-qc-dashboard.spyne.ai/api/qc"
 SLACK_API = "https://slack.com/api/chat.postMessage"
 DEFAULT_CHANNEL = "C0996AMFQRZ"
 
@@ -69,6 +61,11 @@ def _http_get(url: str, timeout: int = 60) -> bytes:
     resp = _SESSION.get(url, timeout=timeout)
     resp.raise_for_status()
     return resp.content
+
+
+def configure_qc_session(cookie_value: str) -> None:
+    """Attach the dashboard's sqc_session cookie to every QC_API request."""
+    _SESSION.headers["Cookie"] = f"sqc_session={cookie_value}"
 
 
 def first_name(raw: str) -> str:
@@ -95,14 +92,7 @@ def ist_yesterday(today_ist: date | None = None) -> date:
     return now_ist - timedelta(days=1)
 
 
-def shift_day_window_utc(day: date) -> tuple[datetime, datetime]:
-    """Return [start, end) in UTC for the shift day = [day 06:00 IST, day+1 06:00 IST)."""
-    start_ist = datetime(day.year, day.month, day.day, 6, 0, tzinfo=IST)
-    end_ist = start_ist + timedelta(days=1)
-    return start_ist.astimezone(timezone.utc), end_ist.astimezone(timezone.utc)
-
-
-# ── Image / 360 ───────────────────────────────────────────────────────────
+# ── Image / 360 / Video ──────────────────────────────────────────────────
 def fetch_qc_counts(product: str, target_day: date) -> dict[str, int]:
     """Sum `n` grouped by first name of `loginUser` where day == target_day."""
     raw = _http_get(f"{QC_API}?product={product}")
@@ -119,42 +109,6 @@ def fetch_qc_counts(product: str, target_day: date) -> dict[str, int]:
         if not key:
             continue
         counts[key] += int(row.get("n") or 0)
-    return dict(counts)
-
-
-# ── Video ─────────────────────────────────────────────────────────────────
-def _parse_ts(s: str) -> datetime | None:
-    if not s:
-        return None
-    s = s.strip()
-    # The sheet uses ISO with trailing Z. Py 3.11+ handles 'Z' in fromisoformat.
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
-def fetch_video_counts(target_day: date) -> dict[str, int]:
-    """Count rows per QA reviewer where qa_timestamp falls in the shift day
-    window and qa_status is non-empty (i.e. actually reviewed)."""
-    raw = _http_get(VIDEO_CSV).decode("utf-8", errors="replace")
-    reader = csv.DictReader(io.StringIO(raw))
-    start_utc, end_utc = shift_day_window_utc(target_day)
-    counts: dict[str, int] = defaultdict(int)
-    for row in reader:
-        status = (row.get("qa_status") or "").strip()
-        if not status:
-            continue
-        reviewer = (row.get("qa_reviewer") or "").strip()
-        if not reviewer or is_test_user(reviewer):
-            continue
-        ts = _parse_ts(row.get("qa_timestamp") or "")
-        if ts is None or not (start_utc <= ts < end_utc):
-            continue
-        counts[first_name(reviewer)] += 1
     return dict(counts)
 
 
@@ -298,7 +252,7 @@ PDF_HTML = """<!doctype html>
 {rows_html}
 <tr class="sum"><td>Total</td><td>{ti}</td><td>{ts}</td><td>{tv}</td><td class="total">{tt}</td></tr>
 </tbody></table>
-<p class="footer">Generated {generated_at} &middot; Sources: spot-qc-dashboard (Image + 360) &middot; SpotQC-QA-Report (Video)</p>
+<p class="footer">Generated {generated_at} &middot; Source: spot-qc-dashboard.spyne.ai</p>
 </body></html>"""
 
 
@@ -448,9 +402,15 @@ def main() -> int:
 
     print(f"Target day (IST): {target.isoformat()}", file=sys.stderr)
 
+    sqc_session = os.environ.get("SQC_SESSION", "").strip()
+    if not sqc_session:
+        print("SQC_SESSION is not set", file=sys.stderr)
+        return 1
+    configure_qc_session(sqc_session)
+
     img = fetch_qc_counts("images", target)
     spin = fetch_qc_counts("360", target)
-    vid = fetch_video_counts(target)
+    vid = fetch_qc_counts("video", target)
 
     print(
         f"Users — image:{len(img)} 360:{len(spin)} video:{len(vid)}",

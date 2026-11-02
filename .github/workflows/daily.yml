@@ -107,6 +107,7 @@ jobs:
         if: ${{ steps.dedupe.outputs.skip != '1' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SQC_SESSION:     ${{ secrets.SQC_SESSION }}
           # Overrides come from workflow_dispatch inputs OR
           # repository_dispatch client_payload (same keys). Blank on
           # either falls through to defaults.
