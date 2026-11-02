@@ -8,8 +8,8 @@ Source
 Image, 360 & Video   https://spot-qc-dashboard.spyne.ai/api/qc?product=images|360|video
                      Row shape: {day: 'YYYY-MM-DD', loginUser, n, ...}
                      "day" is IST calendar day for all three products.
-                     Gated behind Google SSO; requests need the app's
-                     `sqc_session` cookie (see SQC_SESSION below).
+                     Public, no auth (Google SSO was removed from this
+                     endpoint 2026-11-02).
 
 Yesterday
 ---------
@@ -20,10 +20,6 @@ Users are keyed by first name (title case). "Khushi Gautam" and
 
 Env
 ---
-SQC_SESSION       value of the `sqc_session` cookie from a logged-in
-                  spot-qc-dashboard.spyne.ai session. Issued per Google
-                  account and expires (observed ~7 days) — refresh by
-                  signing in again and copying the cookie's new value.
 SLACK_BOT_TOKEN   xoxb-... bot token with chat:write
 SLACK_CHANNEL     channel id, default C0996AMFQRZ (the asked channel)
 DRY_RUN           if set to "1", print the message instead of posting
@@ -61,11 +57,6 @@ def _http_get(url: str, timeout: int = 60) -> bytes:
     resp = _SESSION.get(url, timeout=timeout)
     resp.raise_for_status()
     return resp.content
-
-
-def configure_qc_session(cookie_value: str) -> None:
-    """Attach the dashboard's sqc_session cookie to every QC_API request."""
-    _SESSION.headers["Cookie"] = f"sqc_session={cookie_value}"
 
 
 def first_name(raw: str) -> str:
@@ -401,12 +392,6 @@ def main() -> int:
         target = ist_yesterday()
 
     print(f"Target day (IST): {target.isoformat()}", file=sys.stderr)
-
-    sqc_session = os.environ.get("SQC_SESSION", "").strip()
-    if not sqc_session:
-        print("SQC_SESSION is not set", file=sys.stderr)
-        return 1
-    configure_qc_session(sqc_session)
 
     img = fetch_qc_counts("images", target)
     spin = fetch_qc_counts("360", target)

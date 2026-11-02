@@ -107,7 +107,6 @@ jobs:
         if: ${{ steps.dedupe.outputs.skip != '1' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SQC_SESSION:     ${{ secrets.SQC_SESSION }}
           # Overrides come from workflow_dispatch inputs OR
           # repository_dispatch client_payload (same keys). Blank on
           # either falls through to defaults.
@@ -117,11 +116,10 @@ jobs:
           DRY_RUN:         ${{ (github.event.inputs.dry_run == 'true' || github.event.client_payload.dry_run == 'true' || github.event.client_payload.dry_run == true) && '1' || '' }}
         run: python report.py
 
-      # The dashboard's SQC_SESSION cookie expires every ~7 days and
-      # requires a manual browser login to refresh (no service-account
-      # path exists yet). Without this, an expired cookie fails silently
-      # — nobody notices until someone asks where the report is.
-      - name: Alert on failure (likely an expired SQC_SESSION cookie)
+      # Without this, a failed run (bad credentials, dashboard outage,
+      # Slack API error, etc.) fails silently — nobody notices until
+      # someone asks where the report is.
+      - name: Alert on failure
         if: ${{ failure() && steps.dedupe.outputs.skip != '1' }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
@@ -132,7 +130,7 @@ jobs:
             -d "$(cat <<JSON
           {
             "channel": "C0996AMFQRZ",
-            "text": ":warning: *QA Daily Report failed to post* (run ${{ github.run_id }}). Most likely the SQC_SESSION cookie for spot-qc-dashboard.spyne.ai has expired — refresh it (log in, copy the sqc_session cookie, run 'gh secret set SQC_SESSION') and re-run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\ncc: <@U03MLJZBLF5>"
+            "text": ":warning: *QA Daily Report failed to post* (run ${{ github.run_id }}). Check the run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\ncc: <@U03MLJZBLF5>"
           }
           JSON
           )"
