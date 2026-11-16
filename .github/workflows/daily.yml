@@ -1,13 +1,17 @@
 name: QA Daily Report → Slack
 
 on:
-  # repository_dispatch is the primary trigger — fired by an external
-  # cron (cron-job.org) at 21:30 UTC / 03:00 IST. Unlike GH's own
-  # `schedule`, repository_dispatch runs within seconds of the API
-  # call, so timing is driven by the external scheduler, not GH's
-  # backlog. No `schedule` fallback: it was unreliable (15 min to 2+ h
-  # lag, occasional drops) AND it would duplicate the external post on
-  # days when both fire. Rely on external cron + manual dispatch.
+  # GitHub's native schedule is now the primary trigger, at 22:30 UTC
+  # (04:00 IST). Switched back from the external cron-job.org +
+  # repository_dispatch setup (2026-11-17): that account became
+  # inaccessible (lost credentials, dead login link) and a schedule
+  # change needed on it couldn't be made. GH's own `schedule` can lag
+  # (historically 15 min to 2+ h, rare drops), but it's fully
+  # self-contained — no third-party account to lose access to again.
+  # The dedupe guard below still protects against a double-post if a
+  # manual dispatch and the schedule land on the same IST day.
+  schedule:
+    - cron: '30 22 * * *'
   repository_dispatch:
     types: [daily-report]
   workflow_dispatch:
