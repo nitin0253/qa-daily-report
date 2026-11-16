@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/trigger-qa-report",
-      "schedule": "30 21 * * *"
+      "schedule": "30 22 * * *"
     }
   ]
 }

@@ -1,4 +1,4 @@
-// Vercel Cron fires this at 21:30 UTC daily (= 03:00 IST), per vercel.json.
+// Vercel Cron fires this at 22:30 UTC daily (= 04:00 IST), per vercel.json.
 // It POSTs a workflow_dispatch to the daily.yml GitHub Actions workflow,
 // which does the actual data fetch + Slack post.
 //
