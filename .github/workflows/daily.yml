@@ -12,8 +12,9 @@ on:
   # manual dispatch and the schedule land on the same IST day.
   schedule:
     - cron: '30 22 * * *'
-  repository_dispatch:
-    types: [daily-report]
+  # repository_dispatch removed 2026-11-18: the orphaned cron-job.org job
+  # (inaccessible account) kept firing it at 21:30 UTC / 03:00 IST, posting
+  # an hour before the intended 04:00 IST slot.
   workflow_dispatch:
     inputs:
       target_date:
