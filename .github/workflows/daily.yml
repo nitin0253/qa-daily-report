@@ -1,5 +1,9 @@
 name: QA Daily Report → Slack
 
+# Dry runs get a distinct title so the dedupe guard can ignore them (a dry
+# run must never count as "today already posted").
+run-name: ${{ github.event.inputs.dry_run == 'true' && 'DRY RUN' || 'QA Daily Report → Slack' }}
+
 on:
   # GitHub's native schedule is now the primary trigger, at 22:30 UTC
   # (04:00 IST). Switched back from the external cron-job.org +
@@ -66,6 +70,7 @@ jobs:
           dups = [
               r for r in data.get("workflow_runs", [])
               if r["id"] != my_id
+              and r.get("display_title") != "DRY RUN"
               and datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")).astimezone(ist).date() == today_ist
           ]
           skip = "1" if dups else "0"
