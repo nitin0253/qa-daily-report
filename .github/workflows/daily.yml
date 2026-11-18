@@ -5,20 +5,15 @@ name: QA Daily Report → Slack
 run-name: ${{ github.event.inputs.dry_run == 'true' && 'DRY RUN' || 'QA Daily Report → Slack' }}
 
 on:
-  # GitHub's native schedule is now the primary trigger, at 22:30 UTC
-  # (04:00 IST). Switched back from the external cron-job.org +
-  # repository_dispatch setup (2026-11-17): that account became
-  # inaccessible (lost credentials, dead login link) and a schedule
-  # change needed on it couldn't be made. GH's own `schedule` can lag
-  # (historically 15 min to 2+ h, rare drops), but it's fully
-  # self-contained — no third-party account to lose access to again.
-  # The dedupe guard below still protects against a double-post if a
-  # manual dispatch and the schedule land on the same IST day.
-  schedule:
-    - cron: '30 22 * * *'
-  # repository_dispatch removed 2026-11-18: the orphaned cron-job.org job
-  # (inaccessible account) kept firing it at 21:30 UTC / 03:00 IST, posting
-  # an hour before the intended 04:00 IST slot.
+  # Triggers (2026-11-19):
+  #  - Primary: cron-job.org job "QA Daily Report 04:00 IST" (Asia/Kolkata)
+  #    GETs https://qa-daily-report.vercel.app/api/trigger-qa-report, which
+  #    POSTs a workflow_dispatch to this workflow.
+  #  - Fallback: Vercel Cron (vercel.json, 22:30 UTC) hits the same endpoint.
+  #  - No `schedule:` here on purpose: it lagged and could race the primary.
+  # The dedupe guard below skips a run if today's IST report already posted.
+  # (repository_dispatch was removed 2026-11-18: an orphaned cron-job.org job
+  # kept firing it at 03:00 IST.)
   workflow_dispatch:
     inputs:
       target_date:
