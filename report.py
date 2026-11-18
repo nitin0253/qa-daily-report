@@ -84,12 +84,20 @@ def ist_yesterday(today_ist: date | None = None) -> date:
 
 
 # ── Image / 360 / Video ──────────────────────────────────────────────────
-def fetch_qc_counts(product: str, target_day: date) -> dict[str, int]:
-    """Sum `n` grouped by first name of `loginUser` where day == target_day."""
+def is_issue(submit_issue: str) -> bool:
+    """Same rule as the dashboard (spot-qc report.html updateStats): a row is
+    an issue when its trimmed submitIssue is non-empty and not 'done'."""
+    v = (submit_issue or "").strip().lower()
+    return v != "" and v != "done"
+
+
+def fetch_qc_counts(product: str, target_day: date) -> dict[str, tuple[int, int]]:
+    """{first name: (QAed total, issues)} where day == target_day. Issues are
+    the part of the total whose submitIssue passes is_issue()."""
     raw = _http_get(f"{QC_API}?product={product}")
     payload = json.loads(raw)
     want = target_day.isoformat()
-    counts: dict[str, int] = defaultdict(int)
+    counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for row in payload.get("rows", []):
         if row.get("day") != want:
             continue
@@ -99,69 +107,79 @@ def fetch_qc_counts(product: str, target_day: date) -> dict[str, int]:
         key = first_name(login)
         if not key:
             continue
-        counts[key] += int(row.get("n") or 0)
-    return dict(counts)
+        n = int(row.get("n") or 0)
+        counts[key][0] += n
+        if is_issue(row.get("submitIssue")):
+            counts[key][1] += n
+    return {k: (v[0], v[1]) for k, v in counts.items()}
+
+
+def pct(issues: int, total: int) -> str:
+    """Issue rate to 1 decimal, as the dashboard shows it ('-' if no QAed)."""
+    return f"{issues / total * 100:.1f}%" if total else "-"
 
 
 # ── Report text ───────────────────────────────────────────────────────────
+# Row = (user, img, img_iss, spin, spin_iss, vid, vid_iss, total_qaed)
+# Totals = (img, img_iss, spin, spin_iss, vid, vid_iss, total_qaed)
+Row = tuple[str, int, int, int, int, int, int, int]
+Totals = tuple[int, int, int, int, int, int, int]
+
+
 def build_table(
-    img: dict[str, int],
-    spin: dict[str, int],
-    vid: dict[str, int],
-) -> tuple[list[tuple[str, int, int, int, int]], tuple[int, int, int, int]]:
+    img: dict[str, tuple[int, int]],
+    spin: dict[str, tuple[int, int]],
+    vid: dict[str, tuple[int, int]],
+) -> tuple[list[Row], Totals]:
     users = sorted(set(img) | set(spin) | set(vid), key=lambda u: u.lower())
-    rows: list[tuple[str, int, int, int, int]] = []
-    ti = ts = tv = 0
+    rows: list[Row] = []
+    t = [0] * 6
     for u in users:
-        i, s, v = img.get(u, 0), spin.get(u, 0), vid.get(u, 0)
-        rows.append((u, i, s, v, i + s + v))
-        ti += i
-        ts += s
-        tv += v
-    return rows, (ti, ts, tv, ti + ts + tv)
+        i, ii = img.get(u, (0, 0))
+        s, si = spin.get(u, (0, 0))
+        v, vi = vid.get(u, (0, 0))
+        rows.append((u, i, ii, s, si, v, vi, i + s + v))
+        for k, x in enumerate((i, ii, s, si, v, vi)):
+            t[k] += x
+    return rows, (t[0], t[1], t[2], t[3], t[4], t[5], t[0] + t[2] + t[4])
 
 
-def render_slack_message(
-    target_day: date,
-    rows: list[tuple[str, int, int, int, int]],
-    totals: tuple[int, int, int, int],
-) -> str:
-    """Monospaced code-block table so Slack renders aligned columns."""
+def render_slack_message(target_day: date, rows: list[Row], totals: Totals) -> str:
+    """Monospaced code-block table so Slack renders aligned columns. Each
+    product has a QAed count and an issue-rate (%) column."""
     header_date = target_day.strftime("%d %b %Y")
     lede_date = target_day.strftime("%d-%b")
 
-    name_w = max([len("User")] + [len(r[0]) for r in rows] + [len("Total")])
-    img_w = max(len("Image"), *(len(str(r[1])) for r in rows), len(str(totals[0])))
-    spin_w = max(len("360"), *(len(str(r[2])) for r in rows), len(str(totals[1])))
-    vid_w = max(len("Video"), *(len(str(r[3])) for r in rows), len(str(totals[2])))
-    tot_w = max(len("Total"), *(len(str(r[4])) for r in rows), len(str(totals[3])))
+    heads = ["User", "Image", "Iss%", "360", "Iss%", "Video", "Iss%", "Total"]
 
-    def line(name: str, i: str, s: str, v: str, t: str) -> str:
-        return (
-            f"{name.ljust(name_w)} | "
-            f"{i.rjust(img_w)} | "
-            f"{s.rjust(spin_w)} | "
-            f"{v.rjust(vid_w)} | "
-            f"{t.rjust(tot_w)}"
-        )
+    def cells(name, i, ii, s_, si, v, vi, t) -> list[str]:
+        return [name, str(i), pct(ii, i), str(s_), pct(si, s_),
+                str(v), pct(vi, v), str(t)]
 
-    sep = (
-        "-" * name_w + "-+-" + "-" * img_w + "-+-" + "-" * spin_w +
-        "-+-" + "-" * vid_w + "-+-" + "-" * tot_w
-    )
+    body_rows = [cells(*r) for r in rows]
+    total_row = cells("Total", *totals[:6], totals[6])
+    widths = [
+        max(len(heads[c]), *(len(r[c]) for r in body_rows), len(total_row[c]))
+        for c in range(len(heads))
+    ]
 
-    body = [line("User", "Image", "360", "Video", "Total"), sep]
-    for u, i, s, v, t in rows:
-        body.append(line(u, str(i), str(s), str(v), str(t)))
+    def line(vals: list[str]) -> str:
+        out = [vals[0].ljust(widths[0])]
+        out += [vals[c].rjust(widths[c]) for c in range(1, len(vals))]
+        return " | ".join(out)
+
+    sep = "-+-".join("-" * w for w in widths)
+    body = [line(heads), sep]
+    body += [line(r) for r in body_rows]
     if rows:
         body.append(sep)
-    ti, ts, tv, tt = totals
-    body.append(line("Total", str(ti), str(ts), str(tv), str(tt)))
+    body.append(line(total_row))
 
     table = "\n".join(body)
     return (
         f"*QA Daily Report — {header_date}*\n"
-        f"Here's {lede_date}'s QA review summary across Image, 360 and Video.\n"
+        f"Here's {lede_date}'s QA review summary across Image, 360 and Video. "
+        f"Iss% = issues reported ÷ QAed.\n"
         f"cc: <@U03MLJZBLF5>\n"
         f"```\n{table}\n```"
     )
@@ -238,10 +256,10 @@ PDF_HTML = """<!doctype html>
 <p class="date">{date_full}</p>
 <p class="lede">Here's {lede_date}'s QA review summary across Image, 360 and Video.<br>cc: @Praveen Agarwal</p>
 <table>
-<thead><tr><th>User</th><th>Image</th><th>360</th><th>Video</th><th class="total">Total</th></tr></thead>
+<thead><tr><th>User</th><th>Image</th><th>Iss%</th><th>360</th><th>Iss%</th><th>Video</th><th>Iss%</th><th class="total">Total</th></tr></thead>
 <tbody>
 {rows_html}
-<tr class="sum"><td>Total</td><td>{ti}</td><td>{ts}</td><td>{tv}</td><td class="total">{tt}</td></tr>
+<tr class="sum"><td>Total</td><td>{ti}</td><td>{tip}</td><td>{ts}</td><td>{tsp}</td><td>{tv}</td><td>{tvp}</td><td class="total">{tt}</td></tr>
 </tbody></table>
 <p class="footer">Generated {generated_at} &middot; Source: spot-qc-dashboard.spyne.ai</p>
 </body></html>"""
@@ -253,8 +271,8 @@ def _fmt_int(n: int) -> str:
 
 def render_pdf_bytes(
     target_day: date,
-    rows: list[tuple[str, int, int, int, int]],
-    totals: tuple[int, int, int, int],
+    rows: list[Row],
+    totals: Totals,
 ) -> bytes:
     """Render the same table used in the artifact as a one-page PDF."""
     from weasyprint import HTML  # imported lazily so text-only runs stay light
@@ -263,18 +281,20 @@ def render_pdf_bytes(
     lede_date = target_day.strftime("%d-%b")
     generated_at = datetime.now(IST).strftime("%d %b %Y, %I:%M %p IST")
     rows_html = "\n".join(
-        f"<tr><td>{u}</td><td>{_fmt_int(i)}</td><td>{_fmt_int(s)}</td>"
-        f"<td>{_fmt_int(v)}</td><td class=\"total\">{_fmt_int(t)}</td></tr>"
-        for u, i, s, v, t in rows
+        f"<tr><td>{u}</td><td>{_fmt_int(i)}</td><td>{pct(ii, i)}</td>"
+        f"<td>{_fmt_int(s)}</td><td>{pct(si, s)}</td>"
+        f"<td>{_fmt_int(v)}</td><td>{pct(vi, v)}</td>"
+        f"<td class=\"total\">{_fmt_int(t)}</td></tr>"
+        for u, i, ii, s, si, v, vi, t in rows
     )
-    ti, ts, tv, tt = totals
+    ti, tii, ts, tsi, tv, tvi, tt = totals
 
     # Content-fit page: fixed width that holds the table comfortably, height
     # grown per data row so the PDF doesn't leave an A4-sized blank below.
     # Base covers 5mm top + 5mm bottom margin + ~55mm chrome
     # (title + date + lede + table head + totals row + footer).
     # Each data row adds ~9mm at the current 10pt / 6pt-padding settings.
-    page_w = 190
+    page_w = 220
     page_h = 70 + 9 * max(len(rows), 1)
 
     html = PDF_HTML.format(
@@ -284,8 +304,11 @@ def render_pdf_bytes(
         lede_date=lede_date,
         rows_html=rows_html,
         ti=_fmt_int(ti),
+        tip=pct(tii, ti),
         ts=_fmt_int(ts),
+        tsp=pct(tsi, ts),
         tv=_fmt_int(tv),
+        tvp=pct(tvi, tv),
         tt=_fmt_int(tt),
         generated_at=generated_at,
     )
