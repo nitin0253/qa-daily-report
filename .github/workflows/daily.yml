@@ -29,6 +29,14 @@ on:
         required: false
         default: 'false'
 
+# Serialize runs: if two triggers land together (primary + Vercel fallback, or a
+# stray hit), the second waits for the first to finish, so its dedupe guard
+# then sees the success and skips. Without this both would pass the guard and
+# post twice.
+concurrency:
+  group: qa-daily-report
+  cancel-in-progress: false
+
 jobs:
   report:
     runs-on: ubuntu-latest
